@@ -21,9 +21,8 @@ final class SiteFilter {
     }()
 
     /// Opens the connection to the filter ahead of the first page load.
-    @MainActor
     func prewarm() {
-        Task { _ = await isBlocked(host: "example.com") }
+        Task { @MainActor in _ = await isBlocked(host: "example.com") }
     }
 
     /// True if the filter lists this host. If the filter can't be reached the site is allowed.
