@@ -55,7 +55,9 @@ final class Browser: NSObject, ObservableObject {
     @Published private(set) var bookmarks: [Bookmark] = []
     @Published private(set) var history: [HistoryEntry] = []
     @Published private(set) var homeURL = UserDefaults.standard.string(forKey: "homeURL") ?? ""
-    @Published private(set) var lastDownload: URL?
+    @Published private(set) var downloads: [DownloadItem] = []
+    /// The download shown in the banner at the top of the page.
+    @Published var bannerDownload: DownloadItem?
     @Published var filterEnabled = UserDefaults.standard.object(forKey: "filterEnabled") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(filterEnabled, forKey: "filterEnabled")
@@ -71,6 +73,8 @@ final class Browser: NSObject, ObservableObject {
     private(set) lazy var trackers = TrackerBlocker(controller: userContentController)
     /// Websites that turned out not to offer https, so they aren't upgraded again.
     var httpOnlyHosts = Set<String>()
+    /// The web view's own User-Agent, reused for accelerated downloads.
+    var userAgent: String?
     private let userContentController = WKUserContentController()
     private var privateStore: WKWebsiteDataStore?
     private var allowedOrigins = Set(UserDefaults.standard.stringArray(forKey: "midiAllowedOrigins") ?? [])
@@ -311,11 +315,60 @@ final class Browser: NSObject, ObservableObject {
         UserDefaults.standard.set(homeURL, forKey: "homeURL")
     }
 
-    func finishedDownload(_ file: URL?) {
-        lastDownload = file
+// MARK: Downloads
+
+    var hasActiveDownloads: Bool { downloads.contains { $0.state == .running } }
+
+    func register(_ item: DownloadItem) {
+        item.onChange = { [weak self] in self?.objectWillChange.send() }
+        downloads.insert(item, at: 0)
+        bannerDownload = item
     }
 
-    // MARK: MIDI permission
+    func removeDownload(_ item: DownloadItem) {
+        item.cancel()
+        downloads.removeAll { $0.id == item.id }
+        if bannerDownload?.id == item.id { bannerDownload = nil }
+    }
+
+    func clearFinishedDownloads() {
+        downloads.removeAll { $0.state != .running }
+        if let banner = bannerDownload, banner.state != .running { bannerDownload = nil }
+    }
+
+    /// Fetches a large file over several connections, signed in with the tab's cookies.
+    func startFastDownload(original: URLRequest?, response: HTTPURLResponse, from tab: Tab) {
+        guard let url = response.url else { return }
+        let destination = DownloadItem.uniqueDestination(for: response.suggestedFilename ?? url.lastPathComponent)
+        let item = DownloadItem(name: destination.lastPathComponent, total: response.expectedContentLength)
+        register(item)
+
+        var request = URLRequest(url: url)
+        if let referer = original?.value(forHTTPHeaderField: "Referer") { request.setValue(referer, forHTTPHeaderField: "Referer") }
+        if let userAgent { request.setValue(userAgent, forHTTPHeaderField: "User-Agent") }
+        let etag = response.value(forHTTPHeaderField: "ETag")
+        let validator = (etag.map { !$0.hasPrefix("W/") } ?? false) ? etag : response.value(forHTTPHeaderField: "Last-Modified")
+        let total = response.expectedContentLength
+
+        tab.webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+            guard item.state == .running else { return }
+            let host = (url.host ?? "").lowercased()
+            let path = url.path.isEmpty ? "/" : url.path
+            let matching = cookies.filter { cookie in
+                let domain = cookie.domain.hasPrefix(".") ? String(cookie.domain.dropFirst()) : cookie.domain
+                return (host == domain.lowercased() || host.hasSuffix("." + domain.lowercased()))
+                    && path.hasPrefix(cookie.path) && (!cookie.isSecure || url.scheme == "https")
+            }
+            for (name, value) in HTTPCookie.requestHeaderFields(with: matching) {
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+            let downloader = FastDownloader(request: request, total: total, validator: validator, destination: destination, item: item)
+            item.cancelAction = { downloader.cancel() }
+            downloader.start()
+        }
+    }
+
+        // MARK: MIDI permission
 
     var hasMIDIPermissions: Bool { !allowedOrigins.isEmpty }
 

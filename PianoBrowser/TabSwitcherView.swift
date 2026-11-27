@@ -64,8 +64,8 @@ private struct TabCard: View {
     var body: some View {
         VStack(spacing: 7) {
             Button(action: onSelect) {
-                Color(.secondarySystemGroupedBackground)
-                    .frame(height: 210)
+                (tab.isPrivate ? Color(white: 0.16) : Color(.secondarySystemGroupedBackground))
+                    .frame(height: 220)
                     .overlay(alignment: .top) {
                         if let snapshot = tab.snapshot {
                             Image(uiImage: snapshot).resizable().scaledToFill()
@@ -76,9 +76,9 @@ private struct TabCard: View {
                                 .frame(maxHeight: .infinity)
                         }
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
                             .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: isSelected ? 3 : 1)
                     }
                     .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
@@ -95,8 +95,14 @@ private struct TabCard: View {
                 .padding(7)
                 .accessibilityLabel("Close \(tab.displayTitle)")
             }
-            HStack(spacing: 4) {
-                if tab.isPrivate { Image(systemName: "hand.raised.fill").font(.caption2) }
+            HStack(spacing: 5) {
+                if tab.isPrivate {
+                    Image(systemName: "hand.raised.fill").font(.caption2)
+                } else if let url = tab.displayURL, !tab.isTestKeyboard {
+                    SiteIcon(address: url.absoluteString, title: tab.displayTitle)
+                        .frame(width: 16, height: 16)
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                }
                 Text(tab.displayTitle).font(.caption.weight(.medium)).lineLimit(1)
             }
         }

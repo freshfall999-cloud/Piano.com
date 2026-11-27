@@ -13,10 +13,15 @@ private struct SettingsForm: View {
     @EnvironmentObject private var browser: Browser
     @Environment(\.dismiss) private var dismiss
     @State private var confirmClear = false
+    @State private var showHelp = false
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Button { showHelp = true } label: { Label("How to Use Piano Browser", systemImage: "questionmark.circle") }
+                }
+
                 Section {
                     Toggle("Block Unsafe and Adult Websites", isOn: $browser.filterEnabled)
                 } header: {
@@ -60,6 +65,7 @@ private struct SettingsForm: View {
                     }
                 }
             }
+            .sheet(isPresented: $showHelp) { HelpView() }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

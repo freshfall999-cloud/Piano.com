@@ -23,6 +23,8 @@ final class Tab: NSObject, ObservableObject, Identifiable {
     @Published private(set) var internalPageFor: URL?
     /// True after scrolling down: the bottom bar shrinks to a strip, as in Safari.
     @Published var barCollapsed = false
+    /// The page's own colour (its theme colour, else its background), for tinting the status bar area.
+    @Published private(set) var pageColor: UIColor?
 
     private weak var browser: Browser?
     private let configuration: WKWebViewConfiguration
@@ -30,7 +32,8 @@ final class Tab: NSObject, ObservableObject, Identifiable {
     private var httpsUpgrade: (host: String, original: URL)?
     private var scrollAnchor: CGFloat = 0
     private var barChanged = Date.distantPast
-    private var downloadDestination: URL?
+    private var lastMainRequest: URLRequest?
+    private var wkDownloads: [ObjectIdentifier: (item: DownloadItem, destination: URL, progress: AnyCancellable)] = [:]
     private var midiMainFrame = false
     private var midiSubframes: [WKFrameInfo] = []
     private var cancellables = Set<AnyCancellable>()
@@ -73,6 +76,10 @@ final class Tab: NSObject, ObservableObject, Identifiable {
             guard let self, self.pendingURL == nil else { return }
             self.url = url
         }.store(in: &cancellables)
+        webView.publisher(for: \.themeColor).merge(with: webView.publisher(for: \.underPageBackgroundColor).map { Optional($0) })
+            .receive(on: DispatchQueue.main).sink { [weak self] _ in
+                self?.pageColor = webView.themeColor ?? webView.underPageBackgroundColor
+            }.store(in: &cancellables)
         webView.scrollView.publisher(for: \.contentOffset).sink { [weak self] offset in
             self?.scrolled(to: offset.y, in: webView.scrollView)
         }.store(in: &cancellables)
@@ -179,18 +186,36 @@ final class Tab: NSObject, ObservableObject, Identifiable {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { control.endRefreshing() }
     }
 
-    private func showInternalPage(for url: URL, title: String, symbol: String, heading: String, detail: String) {
+private func showInternalPage(for url: URL, title: String, symbol: String, heading: String, detail: String, retry: Bool = false) {
         func escape(_ text: String) -> String {
             text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: "\"", with: "&quot;")
         }
+        let action = retry
+            ? "<a class=\"button\" href=\"\(escape(url.absoluteString))\">Try Again</a>"
+            : "<a class=\"button\" href=\"javascript:history.back()\">Go Back</a>"
         let html = """
         <!doctype html><meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>\(escape(title))</title>
-        <body style="font: 17px -apple-system; margin: 0; padding: 22vh 32px 0; text-align: center; color-scheme: light dark">
-        <div style="font-size: 54px">\(symbol)</div>
-        <h2 style="margin: 12px 0 8px">\(escape(heading))</h2>
-        <p style="opacity: 0.65; margin: 0 auto; max-width: 420px; line-height: 1.4">\(escape(detail))</p>
+        <style>
+          :root { color-scheme: light dark; --bg: #f2f2f7; --card: #fff; --text: #1c1c1e; --muted: #6e6e73; --tint: #007aff; }
+          @media (prefers-color-scheme: dark) { :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --muted: #98989f; --tint: #0a84ff; } }
+          body { font: 17px -apple-system, system-ui; margin: 0; padding: 14vh 20px 0; background: var(--bg); color: var(--text); }
+          .card { max-width: 420px; margin: 0 auto; padding: 30px 24px 24px; background: var(--card); border-radius: 22px;
+                  text-align: center; box-shadow: 0 6px 24px rgba(0,0,0,0.08); }
+          .symbol { font-size: 50px; line-height: 1; }
+          h1 { font-size: 22px; margin: 14px 0 8px; }
+          p { color: var(--muted); margin: 0 0 22px; line-height: 1.4; font-size: 16px; overflow-wrap: anywhere; }
+          .button { display: block; padding: 13px; border-radius: 13px; background: var(--tint); color: #fff;
+                    font-weight: 600; text-decoration: none; }
+        </style>
+        <div class="card">
+          <div class="symbol">\(symbol)</div>
+          <h1>\(escape(heading))</h1>
+          <p>\(escape(detail))</p>
+          \(action)
+        </div>
         """
         internalPageFor = url
         showsStartPage = false
@@ -226,6 +251,7 @@ extension Tab: WKNavigationDelegate {
             return decisionHandler(.allow, preferences)
         }
         let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+        if isMainFrame { lastMainRequest = navigationAction.request }
 
         guard ["http", "https", "file", "about", "blob", "data"].contains(scheme) else {
             // mailto:, tel:, App Store links and the like belong to other apps.
@@ -282,7 +308,20 @@ extension Tab: WKNavigationDelegate {
         let disposition = (navigationResponse.response as? HTTPURLResponse)?
             .value(forHTTPHeaderField: "Content-Disposition")?.lowercased() ?? ""
         let download = navigationResponse.isForMainFrame && (!navigationResponse.canShowMIMEType || disposition.hasPrefix("attachment"))
-        decisionHandler(download ? .download : .allow)
+        guard download else { return decisionHandler(.allow) }
+
+        // Big files from servers that can send them in pieces are fetched over several connections.
+        if let http = navigationResponse.response as? HTTPURLResponse, http.statusCode == 200, let browser,
+           http.url?.scheme == "https" || http.url?.scheme == "http",
+           (lastMainRequest?.httpMethod ?? "GET") == "GET",
+           http.expectedContentLength >= FastDownloader.minimumSize,
+           (http.value(forHTTPHeaderField: "Accept-Ranges") ?? "").lowercased().contains("bytes"),
+           ["", "identity"].contains((http.value(forHTTPHeaderField: "Content-Encoding") ?? "").lowercased()) {
+            decisionHandler(.cancel)
+            browser.startFastDownload(original: lastMainRequest, response: http, from: self)
+            return
+        }
+        decisionHandler(.download)
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
@@ -304,6 +343,11 @@ extension Tab: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         browser?.saveTabs()
+        if let browser, browser.userAgent == nil {
+            webView.evaluateJavaScript("navigator.userAgent") { [weak browser] value, _ in
+                if let value = value as? String { browser?.userAgent = value }
+            }
+        }
         guard !isPrivate, internalPageFor == nil, let url = webView.url,
               url.scheme == "http" || url.scheme == "https" else { return }
         browser?.recordVisit(title: webView.title ?? "", url: url)
@@ -322,7 +366,7 @@ extension Tab: WKNavigationDelegate {
             return
         }
         showInternalPage(for: failed, title: "Can’t Open Page", symbol: "🧭", heading: "Can’t open this page",
-                         detail: nsError.localizedDescription)
+                         detail: nsError.localizedDescription, retry: true)
     }
 
     func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
@@ -352,28 +396,26 @@ extension Tab: WKNavigationDelegate {
 extension Tab: WKDownloadDelegate {
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String,
                   completionHandler: @escaping (URL?) -> Void) {
-        let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let name = suggestedFilename.isEmpty ? "Download" : suggestedFilename
-        var destination = folder.appendingPathComponent(name)
-        var copy = 2
-        while FileManager.default.fileExists(atPath: destination.path) {
-            let base = (name as NSString).deletingPathExtension
-            let ext = (name as NSString).pathExtension
-            destination = folder.appendingPathComponent(ext.isEmpty ? "\(base) \(copy)" : "\(base) \(copy).\(ext)")
-            copy += 1
-        }
-        downloadDestination = destination
+        let destination = DownloadItem.uniqueDestination(for: suggestedFilename)
+        let item = DownloadItem(name: destination.lastPathComponent, total: response.expectedContentLength)
+        item.cancelAction = { [weak download] in download?.cancel { _ in } }
+        let progress = download.progress.publisher(for: \.completedUnitCount).receive(on: DispatchQueue.main)
+            .sink { [weak item, weak download] received in
+                item?.progress(received: received, total: download?.progress.totalUnitCount ?? 0)
+            }
+        wkDownloads[ObjectIdentifier(download)] = (item, destination, progress)
+        browser?.register(item)
         completionHandler(destination)
     }
 
     func downloadDidFinish(_ download: WKDownload) {
-        browser?.finishedDownload(downloadDestination)
+        guard let entry = wkDownloads.removeValue(forKey: ObjectIdentifier(download)) else { return }
+        entry.item.finish(file: entry.destination)
     }
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
-        let alert = UIAlertController(title: "Download Failed", message: error.localizedDescription, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "OK", style: .default))
-        Presenter.present(alert)
+        guard let entry = wkDownloads.removeValue(forKey: ObjectIdentifier(download)) else { return }
+        entry.item.fail(error.localizedDescription)
     }
 }
 

@@ -33,10 +33,11 @@ private struct StartPageContent: View {
                     }
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
                 }
 
-                Text("Favorites").font(.title2.bold())
+                Text("Favorites").font(.title.bold())
                 LazyVGrid(columns: columns, spacing: 18) {
                     Button { tab.loadTestKeyboard() } label: {
                         FavoriteTile(title: "Test Keyboard") {
@@ -76,7 +77,8 @@ private struct StartPageContent: View {
                     Spacer(minLength: 0)
                 }
                 .padding(14)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
 
                 Text("Instruments").font(.title3.bold())
                 Button(action: openInstruments) {
@@ -95,7 +97,8 @@ private struct StartPageContent: View {
                         Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                     }
                     .padding(14)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
                 }
                 .buttonStyle(.plain)
             }
@@ -105,7 +108,15 @@ private struct StartPageContent: View {
             .frame(maxWidth: 640)
             .frame(maxWidth: .infinity)
         }
-        .background(Color(.systemGroupedBackground))
+        .background {
+            ZStack(alignment: .top) {
+                Color(.systemGroupedBackground)
+                LinearGradient(colors: [Color.accentColor.opacity(0.22), Color.accentColor.opacity(0)],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: 320)
+            }
+            .ignoresSafeArea()
+        }
     }
 }
 
@@ -116,9 +127,9 @@ private struct FavoriteTile<Icon: View>: View {
     var body: some View {
         VStack(spacing: 6) {
             icon
-                .frame(width: 60, height: 60)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
+                .frame(width: 62, height: 62)
+                .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+                .shadow(color: .black.opacity(0.14), radius: 6, y: 3)
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.primary)
@@ -146,6 +157,7 @@ struct SiteIcon: View {
             } else {
                 Text(String((title.first { $0.isLetter || $0.isNumber } ?? "•")).uppercased())
                     .font(.system(size: 26, weight: .semibold, design: .rounded))
+                    .minimumScaleFactor(0.3)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(.secondarySystemGroupedBackground))

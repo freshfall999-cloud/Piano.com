@@ -19,7 +19,10 @@ struct BrowserScreen: View {
     @FocusState private var addressFocused: Bool
     @State private var addressText = ""
     @State private var showInstruments = false
-    @State private var showLibrary = false
+    @State private var library: LibrarySection?
+    @State private var showHelp = false
+    @AppStorage("seenWelcome") private var seenWelcome = false
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showSettings = UserDefaults.standard.string(forKey: "uiTestScreen") == "settings"
     @State private var showTabs = UserDefaults.standard.string(forKey: "uiTestScreen") == "tabs"
     @State private var fullScreen = false
@@ -45,6 +48,7 @@ struct BrowserScreen: View {
             }
             if addressFocused { suggestions }
         }
+        .background(topColor.ignoresSafeArea(edges: .top))
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if !barHidden {
                 if showsCollapsedBar { collapsedBar } else { bar }
@@ -58,9 +62,18 @@ struct BrowserScreen: View {
         .persistentSystemOverlays(fullScreen ? .hidden : .automatic)
         .sheet(isPresented: $showInstruments) {
             InstrumentsView().environmentObject(browser).environmentObject(midi)
+                .presentationDetents([.medium, .large])
         }
-        .sheet(isPresented: $showLibrary) {
-            LibraryView().environmentObject(browser)
+        .sheet(item: $library) { section in
+            LibraryView(section: section).environmentObject(browser)
+        }
+        .sheet(isPresented: $showHelp) { HelpView() }
+        .onAppear {
+            if UserDefaults.standard.string(forKey: "uiTestScreen") == "downloads" { library = .downloads }
+            if !seenWelcome {
+                seenWelcome = true
+                showHelp = true
+            }
         }
         .sheet(isPresented: $showSettings) {
             SettingsView().environmentObject(browser)
@@ -79,6 +92,18 @@ struct BrowserScreen: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
+    }
+
+    /// Like Safari, the status bar area takes the page's colour, when that keeps the clock readable.
+    private var topColor: Color {
+        guard !tab.showsStartPage, let color = tab.pageColor else {
+            return Color(tab.showsStartPage ? UIColor.systemGroupedBackground : UIColor.systemBackground)
+        }
+        var (red, green, blue, alpha): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+        guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha), alpha > 0.9 else { return Color(.systemBackground) }
+        let brightness = 0.299 * red + 0.587 * green + 0.114 * blue
+        let readable = colorScheme == .dark ? brightness < 0.4 : brightness > 0.6
+        return readable ? Color(color) : Color(.systemBackground)
     }
 
     private func go(_ input: String) {
@@ -149,6 +174,14 @@ struct BrowserScreen: View {
                     .accessibilityLabel("Clear")
                 }
             } else {
+                if browser.hasActiveDownloads {
+                    Button { library = .downloads } label: {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 16, weight: .medium))
+                            .frame(width: 30, height: 44)
+                    }
+                    .accessibilityLabel("Downloads")
+                }
                 InstrumentIndicator { showInstruments = true }
                 if tab.showsStartPage {
                     Color.clear.frame(width: 40, height: 44)
@@ -240,7 +273,9 @@ struct BrowserScreen: View {
                 Button { fullScreen = true } label: {
                     Label("Hide Toolbar", systemImage: "arrow.up.left.and.arrow.down.right")
                 }
+                Button { library = .downloads } label: { Label("Downloads", systemImage: "arrow.down.circle") }
                 Button { showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
+                Button { showHelp = true } label: { Label("How to Use", systemImage: "questionmark.circle") }
             }
         } label: {
             Image(systemName: "textformat.size")
@@ -269,7 +304,7 @@ struct BrowserScreen: View {
                 Image(systemName: "square.and.arrow.up").foregroundStyle(.tertiary)
             }
             Spacer()
-            Button { showLibrary = true } label: { Image(systemName: "book") }
+            Button { library = .bookmarks } label: { Image(systemName: "book") }
                 .accessibilityLabel("Bookmarks and History")
             Spacer()
             Button {
@@ -320,23 +355,25 @@ struct BrowserScreen: View {
         }
     }
 
-    @ViewBuilder
+@ViewBuilder
     private var downloadBanner: some View {
-        if let file = browser.lastDownload {
-            HStack(spacing: 12) {
-                Image(systemName: "arrow.down.circle.fill").foregroundStyle(.tint)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(file.lastPathComponent).lineLimit(1)
-                    Text("Saved to Files › Piano Browser").font(.footnote).foregroundStyle(.secondary)
+        if let item = browser.bannerDownload {
+            HStack(spacing: 6) {
+                DownloadRow(item: item)
+                Button { browser.bannerDownload = nil } label: {
+                    Image(systemName: "xmark").font(.footnote.weight(.semibold)).foregroundStyle(.secondary).padding(6)
                 }
-                Spacer()
-                ShareLink(item: file) { Image(systemName: "square.and.arrow.up") }
-                Button { browser.finishedDownload(nil) } label: { Image(systemName: "xmark") }
-                    .accessibilityLabel("Dismiss")
+                .accessibilityLabel("Dismiss")
             }
-            .padding(12)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .padding(10)
+            .padding(.leading, 14)
+            .padding(.trailing, 8)
+            .padding(.vertical, 10)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+            .padding(.horizontal, 12)
+            .padding(.top, 6)
+            .onTapGesture { library = .downloads }
+            .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 
