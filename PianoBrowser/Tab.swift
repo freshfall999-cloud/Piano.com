@@ -33,6 +33,7 @@ final class Tab: NSObject, ObservableObject, Identifiable {
     private var scrollAnchor: CGFloat = 0
     private var barChanged = Date.distantPast
     private var lastMainRequest: URLRequest?
+    private var hasCommittedPage = false
     private var wkDownloads: [ObjectIdentifier: (item: DownloadItem, destination: URL, progress: AnyCancellable)] = [:]
     private var midiMainFrame = false
     private var midiSubframes: [WKFrameInfo] = []
@@ -319,9 +320,18 @@ extension Tab: WKNavigationDelegate {
            ["", "identity"].contains((http.value(forHTTPHeaderField: "Content-Encoding") ?? "").lowercased()) {
             decisionHandler(.cancel)
             browser.startFastDownload(original: lastMainRequest, response: http, from: self)
+            closeIfOnlyForDownload()
             return
         }
         decisionHandler(.download)
+        closeIfOnlyForDownload()
+    }
+
+    /// A tab that was opened just to fetch a file never shows a page, so it goes away (as in Safari).
+    /// It is kept alive in the background until its download ends.
+    private func closeIfOnlyForDownload() {
+        guard !hasCommittedPage, !showsStartPage else { return }
+        DispatchQueue.main.async { [self] in browser?.retire(self) }
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
@@ -336,6 +346,7 @@ extension Tab: WKNavigationDelegate {
         // A new page has to ask for MIDI again before it receives anything.
         midiMainFrame = false
         midiSubframes.removeAll()
+        hasCommittedPage = true
         httpsUpgrade = nil
         if barCollapsed { barCollapsed = false }
         if webView.url?.scheme != "about" { internalPageFor = nil }
@@ -411,11 +422,13 @@ extension Tab: WKDownloadDelegate {
     func downloadDidFinish(_ download: WKDownload) {
         guard let entry = wkDownloads.removeValue(forKey: ObjectIdentifier(download)) else { return }
         entry.item.finish(file: entry.destination)
+        if wkDownloads.isEmpty { browser?.release(self) }
     }
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         guard let entry = wkDownloads.removeValue(forKey: ObjectIdentifier(download)) else { return }
         entry.item.fail(error.localizedDescription)
+        if wkDownloads.isEmpty { browser?.release(self) }
     }
 }
 

@@ -77,6 +77,7 @@ final class Browser: NSObject, ObservableObject {
     var userAgent: String?
     private let userContentController = WKUserContentController()
     private var privateStore: WKWebsiteDataStore?
+    private var retiredTabs: [Tab] = []
     private var allowedOrigins = Set(UserDefaults.standard.stringArray(forKey: "midiAllowedOrigins") ?? [])
 
     init(midi: MIDIManager) {
@@ -193,6 +194,27 @@ final class Browser: NSObject, ObservableObject {
             next.activate()
         }
         saveTabs()
+    }
+
+    /// Removes a tab from view but keeps it alive, for a tab whose only job is a running download.
+    func retire(_ tab: Tab) {
+        guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+        retiredTabs.append(tab)
+        tabs.remove(at: index)
+        if tabs.isEmpty {
+            newTab()
+        } else if selectedTabID == tab.id {
+            let next = tabs[min(index, tabs.count - 1)]
+            selectedTabID = next.id
+            next.activate()
+        }
+        saveTabs()
+        // Nothing may ever arrive for it (cancelled, or fetched by the fast downloader): let go after a day at most.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 86_400) { [weak self] in self?.release(tab) }
+    }
+
+    func release(_ tab: Tab) {
+        retiredTabs.removeAll { $0.id == tab.id }
     }
 
     func closeAllTabs() {

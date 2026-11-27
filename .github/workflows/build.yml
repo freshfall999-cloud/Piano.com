@@ -57,17 +57,14 @@ jobs:
             xcrun simctl io "$udid" screenshot "shots/$name.png"
           }
           shot 1-welcome
-          shot 2-start
-          shot 3-page -uiTestURL https://en.wikipedia.org/wiki/Piano
-          shot 4-download -uiTestURL https://proof.ovh.net/files/10Mb.dat -uiTestScreen downloads
-          sleep 15
-          xcrun simctl io "$udid" screenshot shots/5-download-done.png
+          shot 2-page -uiTestURL https://en.wikipedia.org/wiki/Piano
+          shot 3-download -uiTestURL https://proof.ovh.net/files/10Mb.dat
+          sleep 10
           ls -l "$(xcrun simctl get_app_container "$udid" com.example.PianoBrowser data)/Documents"
           shasum -a 256 "$(xcrun simctl get_app_container "$udid" com.example.PianoBrowser data)/Documents/"*
-          shot 6-blocked -uiTestURL http://nudity.testcategory.com
-          xcrun simctl ui "$udid" appearance dark
-          shot 7-dark-start
-          shot 8-dark-tabs -uiTestScreen tabs
+          shot 4-relaunch
+          shot 5-tabs -uiTestScreen tabs
+          ls -l "$(xcrun simctl get_app_container "$udid" com.example.PianoBrowser data)/Documents"
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'workflow_dispatch' && inputs.screenshots
         with:
