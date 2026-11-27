@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Piano Browser</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f4f2ee; --panel: #ffffff; --text: #1d1b18; --muted: #6d675e;
+    --line: #dedad2; --accent: #c2410c; --white-key: #fffdf8; --black-key: #23201c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151412; --panel: #201e1b; --text: #f1ede6; --muted: #a39c90;
+      --line: #36322d; --accent: #fb923c; --white-key: #ece7dd; --black-key: #0c0b0a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px 16px 32px; background: var(--bg); color: var(--text);
+    font: 16px/1.45 -apple-system, system-ui, sans-serif; -webkit-text-size-adjust: 100%;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 8px; }
+  p { margin: 0 0 12px; }
+  .lead { color: var(--muted); margin-bottom: 20px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 14px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: 6px 0; border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: baseline; }
+  li:first-child { border-top: 0; }
+  .tag { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); min-width: 34px; }
+  .empty { color: var(--muted); }
+  #piano {
+    position: relative; height: 150px; display: flex; border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--line); touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  .white { flex: 1; background: var(--white-key); border-right: 1px solid var(--line); }
+  .white:last-of-type { border-right: 0; }
+  .black { position: absolute; top: 0; height: 60%; background: var(--black-key); border-radius: 0 0 4px 4px; }
+  .on { background: var(--accent) !important; }
+  #log {
+    font: 12px/1.5 ui-monospace, Menlo, monospace; color: var(--muted); height: 110px; overflow: hidden;
+    white-space: pre; margin: 0;
+  }
+  ol { margin: 0; padding-left: 20px; color: var(--muted); }
+  ol li { display: list-item; border: 0; padding: 2px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Piano Browser</h1>
+  <p class="lead">A browser that lets web apps use your MIDI instruments. Type your piano app's address in the bar above, or test your instrument here first.</p>
+
+  <section>
+    <h2>Instruments</h2>
+    <ul id="devices"><li class="empty">Looking for instruments…</li></ul>
+  </section>
+
+  <section>
+    <h2>Test keyboard</h2>
+    <p id="hint" class="empty">Play your instrument, or tap the keys. Tap once to switch sound on.</p>
+    <div id="piano"></div>
+  </section>
+
+  <section>
+    <h2>MIDI monitor</h2>
+    <pre id="log">Waiting for MIDI messages…</pre>
+  </section>
+
+  <section>
+    <h2>Connecting</h2>
+    <ol>
+      <li><b>USB:</b> plug the instrument in with a USB-C cable or a Lightning “Camera Adapter”. It appears above by itself.</li>
+      <li><b>Bluetooth:</b> tap the piano button in the toolbar, then “Bluetooth MIDI”.</li>
+      <li>Tap ⋯ → “Set as Home Page” on your piano app to open it automatically.</li>
+    </ol>
+  </section>
+</main>
+<script>
+(function () {
+  var FIRST = 48, LAST = 83; // C3..B5
+  var BLACK = { 1: 1, 3: 1, 6: 1, 8: 1, 10: 1 };
+  var piano = document.getElementById('piano');
+  var keys = {};
+  var whites = [];
+  for (var n = FIRST; n <= LAST; n++) if (!BLACK[n % 12]) whites.push(n);
+  whites.forEach(function (n) {
+    var el = document.createElement('div');
+    el.className = 'white';
+    el.dataset.note = n;
+    piano.appendChild(el);
+    keys[n] = el;
+  });
+  var w = 100 / whites.length;
+  for (var m = FIRST; m <= LAST; m++) {
+    if (!BLACK[m % 12]) continue;
+    var el = document.createElement('div');
+    el.className = 'black';
+    el.dataset.note = m;
+    el.style.width = (w * 0.62) + '%';
+    el.style.left = (whites.indexOf(m - 1) + 1) * w - w * 0.31 + '%';
+    piano.appendChild(el);
+    keys[m] = el;
+  }
+
+  // --- tiny synth ---
+  var ctx = null, voices = {}, sustain = false, held = {};
+  function audio() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      ctx = new AC();
+    }
+    if (ctx.state === 'suspended') ctx.resume();
+    return ctx;
+  }
+  function release(note) {
+    var v = voices[note];
+    if (!v) return;
+    delete voices[note];
+    var t = ctx.currentTime;
+    v.gain.gain.cancelScheduledValues(t);
+    v.gain.gain.setValueAtTime(v.gain.gain.value, t);
+    v.gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+    v.osc.stop(t + 0.3);
+  }
+  function noteOn(note, velocity) {
+    if (keys[note]) keys[note].classList.add('on');
+    held[note] = true;
+    var c = audio();
+    if (!c) return;
+    release(note);
+    var osc = c.createOscillator(), gain = c.createGain(), t = c.currentTime;
+    osc.type = 'triangle';
+    osc.frequency.value = 440 * Math.pow(2, (note - 69) / 12);
+    var peak = 0.05 + 0.3 * (velocity / 127);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(peak, t + 0.008);
+    gain.gain.exponentialRampToValueAtTime(peak * 0.25, t + 1.5);
+    osc.connect(gain).connect(c.destination);
+    osc.start(t);
+    voices[note] = { osc: osc, gain: gain };
+  }
+  function noteOff(note) {
+    if (keys[note]) keys[note].classList.remove('on');
+    delete held[note];
+    if (ctx && !sustain) release(note);
+  }
+  function pedal(down) {
+    sustain = down;
+    if (!down && ctx) Object.keys(voices).forEach(function (n) { if (!held[n]) release(+n); });
+  }
+
+  // --- on-screen keys (also sent to MIDI outputs) ---
+  var midi = null, touches = {};
+  function sendAll(bytes) {
+    if (!midi) return;
+    midi.outputs.forEach(function (out) { try { out.send(bytes); } catch (e) {} });
+  }
+  function noteAt(ev) {
+    var el = document.elementFromPoint(ev.clientX, ev.clientY);
+    return el && el.dataset && el.dataset.note ? +el.dataset.note : null;
+  }
+  function touchMove(ev) {
+    var note = noteAt(ev), old = touches[ev.pointerId];
+    if (note === old) return;
+    if (old != null) { noteOff(old); sendAll([0x80, old, 0]); }
+    if (note != null) { noteOn(note, 90); sendAll([0x90, note, 90]); }
+    touches[ev.pointerId] = note;
+  }
+  function touchEnd(ev) {
+    var old = touches[ev.pointerId];
+    if (old != null) { noteOff(old); sendAll([0x80, old, 0]); }
+    delete touches[ev.pointerId];
+  }
+  piano.addEventListener('pointerdown', function (ev) { ev.preventDefault(); piano.setPointerCapture(ev.pointerId); touchMove(ev); });
+  piano.addEventListener('pointermove', function (ev) { if (ev.pointerId in touches) touchMove(ev); });
+  piano.addEventListener('pointerup', touchEnd);
+  piano.addEventListener('pointercancel', touchEnd);
+  document.addEventListener('pointerdown', audio, { passive: true });
+
+  // --- MIDI ---
+  var NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  var lines = [];
+  function log(text) {
+    lines.push(text);
+    if (lines.length > 6) lines.shift();
+    document.getElementById('log').textContent = lines.join('\n');
+  }
+  function onMessage(ev) {
+    var d = ev.data, type = d[0] & 0xF0, ch = (d[0] & 0x0F) + 1;
+    if (d[0] === 0xF8 || d[0] === 0xFE) return; // clock / active sensing
+    var hex = Array.prototype.map.call(d, function (b) { return ('0' + b.toString(16)).slice(-2); }).join(' ');
+    var what = '';
+    if (type === 0x90 && d[2] > 0) { noteOn(d[1], d[2]); what = 'note on  ' + NAMES[d[1] % 12] + (Math.floor(d[1] / 12) - 1) + '  vel ' + d[2]; }
+    else if (type === 0x80 || type === 0x90) { noteOff(d[1]); what = 'note off ' + NAMES[d[1] % 12] + (Math.floor(d[1] / 12) - 1); }
+    else if (type === 0xB0) { if (d[1] === 64) pedal(d[2] >= 64); what = 'control ' + d[1] + ' = ' + d[2]; }
+    else if (type === 0xE0) what = 'pitch bend';
+    else if (type === 0xC0) what = 'program ' + d[1];
+    log(hex.padEnd(12) + (d[0] < 0xF0 ? 'ch' + ch + '  ' : '') + what);
+  }
+  function renderDevices() {
+    var ul = document.getElementById('devices');
+    ul.textContent = '';
+    function row(tag, port) {
+      var li = document.createElement('li'), t = document.createElement('span'), name = document.createElement('span');
+      t.className = 'tag'; t.textContent = tag;
+      name.textContent = port.name || 'MIDI device';
+      li.appendChild(t); li.appendChild(name); ul.appendChild(li);
+    }
+    midi.inputs.forEach(function (p) { row('In', p); });
+    midi.outputs.forEach(function (p) { row('Out', p); });
+    if (!ul.children.length) {
+      var li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = 'No instrument connected yet. Plug one in, or pair over Bluetooth from the piano button.';
+      ul.appendChild(li);
+    }
+    midi.inputs.forEach(function (p) { p.onmidimessage = onMessage; });
+  }
+  if (!navigator.requestMIDIAccess) {
+    document.getElementById('devices').firstChild.textContent = 'Web MIDI is not available in this browser.';
+    return;
+  }
+  navigator.requestMIDIAccess({ sysex: false }).then(function (access) {
+    midi = access;
+    renderDevices();
+    access.onstatechange = renderDevices;
+  }, function (err) {
+    document.getElementById('devices').firstChild.textContent = 'MIDI access failed: ' + err.message;
+  });
+})();
+</script>
+</body>
+</html>

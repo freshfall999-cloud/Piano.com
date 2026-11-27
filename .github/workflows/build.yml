@@ -1,0 +1,38 @@
+name: Build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  polyfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save playwright && npx playwright install --with-deps chromium
+      - run: node tests/polyfill.test.js
+
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build for the iOS Simulator
+        run: |
+          xcodebuild -version
+          xcodebuild build \
+            -project PianoBrowser.xcodeproj \
+            -target PianoBrowser \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            SYMROOT="$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Check bundled web files
+        run: |
+          app=build/Debug-iphonesimulator/PianoBrowser.app
+          ls "$app"
+          test -f "$app/WebMIDIPolyfill.js"
+          test -f "$app/start.html"
+          plutil -p "$app/Info.plist"
