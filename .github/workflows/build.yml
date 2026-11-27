@@ -49,10 +49,11 @@ jobs:
           xcrun simctl bootstatus "$udid" -b
           xcrun simctl install "$udid" build/Debug-iphonesimulator/PianoBrowser.app
           mkdir shots
+          sleep 20
           shot() {
             name=$1; shift
             xcrun simctl terminate "$udid" com.example.PianoBrowser || true
-            xcrun simctl launch "$udid" com.example.PianoBrowser "$@"
+            for try in 1 2 3 4; do xcrun simctl launch "$udid" com.example.PianoBrowser "$@" && break; sleep 20; done
             sleep 12
             xcrun simctl io "$udid" screenshot "shots/$name.png"
           }
