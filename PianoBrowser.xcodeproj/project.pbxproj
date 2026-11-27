@@ -193,6 +193,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Config/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Piano Browser";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_UIFileSharingEnabled = YES;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Piano Browser uses Bluetooth to connect to MIDI instruments.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Piano Browser opens web apps running on your local network.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Websites you allow can use the microphone, for example to record or tune.";
@@ -223,6 +225,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Config/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Piano Browser";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_UIFileSharingEnabled = YES;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Piano Browser uses Bluetooth to connect to MIDI instruments.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Piano Browser opens web apps running on your local network.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Websites you allow can use the microphone, for example to record or tune.";

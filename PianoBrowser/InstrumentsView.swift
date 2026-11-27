@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The sheet behind the piano button: what's connected, and Bluetooth pairing.
 struct InstrumentsView: View {
-    @EnvironmentObject private var browser: BrowserModel
+    @EnvironmentObject private var browser: Browser
     @EnvironmentObject private var midi: MIDIManager
     @Environment(\.dismiss) private var dismiss
 
@@ -41,7 +41,7 @@ struct InstrumentsView: View {
                         Label("Bluetooth MIDI", systemImage: "dot.radiowaves.left.and.right")
                     }
                     Button {
-                        browser.loadStartPage()
+                        browser.selectedTab.loadTestKeyboard()
                         dismiss()
                     } label: {
                         Label("Open Test Keyboard", systemImage: "pianokeys")
@@ -50,13 +50,6 @@ struct InstrumentsView: View {
                     Text("USB instruments appear by themselves. Use a USB-C cable, or Apple’s Lightning to USB Camera Adapter on older iPhones.")
                 }
 
-                if browser.hasMIDIPermissions {
-                    Section {
-                        Button("Forget Allowed Websites", role: .destructive) { browser.resetMIDIPermissions() }
-                    } footer: {
-                        Text("Websites will have to ask again before using your instruments.")
-                    }
-                }
             }
             .navigationTitle("Instruments")
             .navigationBarTitleDisplayMode(.inline)
