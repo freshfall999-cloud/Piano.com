@@ -41,6 +41,24 @@ jobs:
           test -f "$app/WebMIDIPolyfill.js"
           test -f "$app/start.html"
           plutil -p "$app/Info.plist"
+      - name: Build the iPhone app (unsigned .ipa for Sideloadly)
+        run: |
+          xcodebuild build \
+            -project PianoBrowser.xcodeproj \
+            -target PianoBrowser \
+            -configuration Release \
+            -sdk iphoneos \
+            SYMROOT="$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+          mkdir -p ipa/Payload
+          cp -R build/Release-iphoneos/PianoBrowser.app ipa/Payload/
+          (cd ipa && zip -qry PianoBrowser.ipa Payload)
+          ls -l ipa/PianoBrowser.ipa
+          lipo -info ipa/Payload/PianoBrowser.app/PianoBrowser
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PianoBrowser-ipa
+          path: ipa/PianoBrowser.ipa
       - name: Screenshots in the simulator
         if: github.event_name == 'workflow_dispatch' && inputs.screenshots
         run: |

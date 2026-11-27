@@ -54,6 +54,22 @@ digital piano, keyboard, drum pad or any other MIDI instrument and web apps that
 
 ## Install on your iPhone
 
+There are two ways. Either way the app is signed with your own Apple ID; with a free Apple ID it
+has to be re-installed (or refreshed) every 7 days.
+
+### With Sideloadly (Windows or Mac, no Xcode)
+
+1. On GitHub, open the **Actions** tab, click the newest successful **Build** run, and download the
+   **PianoBrowser-ipa** artifact at the bottom of the page. Unzip it to get `PianoBrowser.ipa`.
+2. Install [Sideloadly](https://sideloadly.io) on your computer (on Windows it also needs iTunes and iCloud
+   from Apple's website, not the Microsoft Store versions).
+3. Connect your iPhone by cable, tap **Trust** on the phone, drag `PianoBrowser.ipa` into Sideloadly,
+   enter your Apple ID and press **Start**.
+4. On the phone: Settings → General → VPN & Device Management → trust your Apple ID.
+   On iOS 16 or later also switch on Settings → Privacy & Security → **Developer Mode** and restart.
+
+### With Xcode (Mac)
+
 You need a Mac with Xcode 16 or newer. A free Apple ID is enough.
 
 1. Open `PianoBrowser.xcodeproj` in Xcode.
