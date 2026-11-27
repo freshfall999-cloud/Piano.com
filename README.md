@@ -11,7 +11,10 @@ digital piano, keyboard, drum pad or any other MIDI instrument and web apps that
   share, bookmarks, tabs) over the bottom edge. The bar shrinks to the site name as you scroll down.
 - Tabs with a tab grid, private tabs, swipe across the address bar to change tab, and tabs restored on the next launch.
 - The address bar searches or opens addresses, with suggestions from bookmarks and history.
-- Start page with favorites, bookmarks, history, find on page, desktop-site mode, downloads (saved to Files), hide toolbar.
+- Start page with favorites, bookmarks, history, find on page, desktop-site mode, hide toolbar.
+- Downloads are saved to the Files app with progress and speed shown. Files of 8 MB or more are fetched over
+  four connections at once when the server allows it, which helps on servers that limit each connection.
+- A short guide opens on first launch and is always under **AA → How to Use**.
 - Links that open new windows, sign-in prompts, pull to refresh and swipe back/forward all behave as in Safari.
 
 **Protection** (Settings → Block Unsafe and Adult Websites, on by default)
@@ -87,6 +90,7 @@ midi.inputs.forEach(input => {
 | `PianoBrowser/Tab.swift` | One tab's `WKWebView`: navigation, filtering, downloads, dialogs |
 | `PianoBrowser/SiteFilter.swift` | Website check against the family DNS filter, safe search, https upgrade, tracking-tag removal |
 | `PianoBrowser/TrackerBlocker.swift` | Builds and installs the tracker/ad block list |
+| `PianoBrowser/Downloads.swift` | Download list, multi-connection downloader |
 | `PianoBrowser/Storage.swift` | Encrypted-at-rest storage for bookmarks, history and tabs |
 | `PianoBrowser/MIDIManager.swift` | CoreMIDI: listens to every source, sends to destinations, tracks hot-plugging |
 | `PianoBrowser/*View.swift` | The interface: browser window, start page, tab grid, bookmarks/history, settings, instruments |
