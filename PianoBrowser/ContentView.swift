@@ -27,13 +27,19 @@ struct BrowserScreen: View {
 
     /// The bar steps aside while a web page's own keyboard is up, and in full screen.
     private var barHidden: Bool { fullScreen || (keyboardUp && !addressFocused) }
+    private var showsCollapsedBar: Bool { tab.barCollapsed && !addressFocused && !tab.showsStartPage }
+
+    /// How much of the page's bottom edge the bar covers; the page keeps its own content clear of it.
+    private var barHeight: CGFloat { barHidden ? 0 : showsCollapsedBar ? Self.collapsedBarHeight : Self.fullBarHeight }
+    private static let collapsedBarHeight: CGFloat = 26
+    private static let fullBarHeight: CGFloat = 104
 
     var body: some View {
         ZStack {
             if tab.showsStartPage {
                 StartPageView(tab: tab) { showInstruments = true }
             } else {
-                WebViewContainer(webView: tab.webView)
+                WebViewContainer(webView: tab.webView, barHeight: barHeight)
                     .id(tab.id)
                     .ignoresSafeArea(.all, edges: .bottom)
             }
@@ -41,7 +47,7 @@ struct BrowserScreen: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if !barHidden {
-                if tab.barCollapsed && !addressFocused && !tab.showsStartPage { collapsedBar } else { bar }
+                if showsCollapsedBar { collapsedBar } else { bar }
             }
         }
         .overlay(alignment: .top) { downloadBanner }
@@ -110,7 +116,7 @@ struct BrowserScreen: View {
             }
             .foregroundStyle(.primary)
             .frame(maxWidth: .infinity)
-            .frame(height: 26)
+            .frame(height: Self.collapsedBarHeight)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -371,9 +377,54 @@ private struct InstrumentIndicator: View {
     }
 }
 
-struct WebViewContainer: UIViewRepresentable {
+/// Hosts a tab's web view full-height underneath the bottom bar, and tells WebKit
+/// how much of it the bar covers so pages lay out (and pin their footers) above it.
+struct WebViewContainer: UIViewControllerRepresentable {
     let webView: WKWebView
+    let barHeight: CGFloat
 
-    func makeUIView(context: Context) -> WKWebView { webView }
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func makeUIViewController(context: Context) -> WebViewController {
+        WebViewController(webView: webView)
+    }
+
+    func updateUIViewController(_ controller: WebViewController, context: Context) {
+        controller.barHeight = barHeight
+    }
+}
+
+final class WebViewController: UIViewController {
+    private let webView: WKWebView
+    var barHeight: CGFloat = 0 {
+        didSet { if barHeight != oldValue { updateInsets() } }
+    }
+
+    init(webView: WKWebView) {
+        self.webView = webView
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        webView.removeFromSuperview()
+        webView.frame = view.bounds
+        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(webView)
+        updateInsets()
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        updateInsets()
+    }
+
+    /// Makes the bottom safe area exactly "home indicator + bar", whatever SwiftUI passed down.
+    private func updateInsets() {
+        guard isViewLoaded else { return }
+        let system = view.safeAreaInsets.bottom - additionalSafeAreaInsets.bottom
+        let wanted = barHeight == 0 ? system : barHeight + (view.window?.safeAreaInsets.bottom ?? 0)
+        let extra = max(0, wanted - system)
+        if abs(extra - additionalSafeAreaInsets.bottom) > 0.5 { additionalSafeAreaInsets.bottom = extra }
+    }
 }
