@@ -29,7 +29,7 @@ struct LibraryView: View {
                     }
                 } else {
                     if browser.bookmarks.isEmpty {
-                        Text("Add bookmarks from the ••• menu in the address bar.").foregroundStyle(.secondary)
+                        Text("Add bookmarks from the menu in the address bar.").foregroundStyle(.secondary)
                     }
                     ForEach(browser.bookmarks) { bookmark in
                         row(title: bookmark.title, address: bookmark.url, detail: nil)

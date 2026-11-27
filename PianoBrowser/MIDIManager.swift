@@ -1,3 +1,4 @@
+import Combine
 import CoreMIDI
 import Foundation
 
@@ -16,8 +17,9 @@ struct MIDIDevice: Identifiable, Equatable {
 final class MIDIManager: ObservableObject {
     @Published private(set) var inputs: [MIDIDevice] = []
     @Published private(set) var outputs: [MIDIDevice] = []
-    /// Bumped (at most a few times a second) while messages arrive.
-    @Published private(set) var activityTick = 0
+    /// Fires (at most a few times a second) while messages arrive. Not published
+    /// state, so playing doesn't make the whole interface redraw.
+    let activity = PassthroughSubject<Void, Never>()
     @Published private(set) var startupError: String?
 
     /// Called on the main thread with the source id and one raw CoreMIDI packet.
@@ -68,7 +70,7 @@ final class MIDIManager: ObservableObject {
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - self.lastTick > 0.12 {
                     self.lastTick = now
-                    self.activityTick &+= 1
+                    self.activity.send()
                 }
             }
         }

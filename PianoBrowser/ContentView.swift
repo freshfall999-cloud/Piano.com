@@ -5,39 +5,48 @@ struct ContentView: View {
     @EnvironmentObject private var browser: Browser
 
     var body: some View {
-        BrowserScreen(tab: browser.selectedTab)
+        BrowserScreen(tab: browser.selectedTab, trackers: browser.trackers)
     }
 }
 
-/// The browser window: page on top, Safari-style address bar and toolbar at the bottom.
+/// The browser window, laid out like Safari: the page fills the screen and a
+/// translucent bar with the address field and toolbar floats over its bottom edge.
 struct BrowserScreen: View {
     @ObservedObject var tab: Tab
+    @ObservedObject var trackers: TrackerBlocker
     @EnvironmentObject private var browser: Browser
     @EnvironmentObject private var midi: MIDIManager
     @FocusState private var addressFocused: Bool
     @State private var addressText = ""
     @State private var showInstruments = false
     @State private var showLibrary = false
-    @State private var showSettings = false
+    @State private var showSettings = UserDefaults.standard.string(forKey: "uiTestScreen") == "settings"
     @State private var showTabs = UserDefaults.standard.string(forKey: "uiTestScreen") == "tabs"
     @State private var fullScreen = false
-    @State private var activityLit = false
+    @State private var keyboardUp = false
+
+    /// The bar steps aside while a web page's own keyboard is up, and in full screen.
+    private var barHidden: Bool { fullScreen || (keyboardUp && !addressFocused) }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
+        ZStack {
+            if tab.showsStartPage {
+                StartPageView(tab: tab) { showInstruments = true }
+            } else {
                 WebViewContainer(webView: tab.webView)
                     .id(tab.id)
-                if tab.showsStartPage {
-                    StartPageView(tab: tab) { showInstruments = true }
-                }
-                if addressFocused { suggestions }
+                    .ignoresSafeArea(.all, edges: .bottom)
             }
-            .overlay(alignment: .top) { downloadBanner }
-            .overlay(alignment: .bottomTrailing) {
-                if fullScreen { exitFullScreenButton }
+            if addressFocused { suggestions }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !barHidden {
+                if tab.barCollapsed && !addressFocused && !tab.showsStartPage { collapsedBar } else { bar }
             }
-            if !fullScreen { chrome }
+        }
+        .overlay(alignment: .top) { downloadBanner }
+        .overlay(alignment: .bottomTrailing) {
+            if fullScreen { exitFullScreenButton }
         }
         .statusBarHidden(fullScreen)
         .persistentSystemOverlays(fullScreen ? .hidden : .automatic)
@@ -62,10 +71,8 @@ struct BrowserScreen: View {
                 DispatchQueue.main.async { field.selectAll(nil) }
             }
         }
-        .onReceive(midi.$activityTick.dropFirst()) { _ in
-            activityLit = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { activityLit = false }
-        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
     }
 
     private func go(_ input: String) {
@@ -75,25 +82,44 @@ struct BrowserScreen: View {
 
     // MARK: Bottom bar
 
-    private var chrome: some View {
+    private var bar: some View {
         VStack(spacing: 0) {
-            Divider()
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 addressCapsule
                 if addressFocused {
                     Button("Cancel") { addressFocused = false }
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 14)
             .padding(.top, 8)
-            .padding(.bottom, addressFocused ? 8 : 2)
+            .padding(.bottom, addressFocused ? 10 : 4)
             if !addressFocused { toolbar }
         }
         .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+    }
+
+    /// After scrolling down the bar shrinks to the site name; a tap brings it back.
+    private var collapsedBar: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) { tab.barCollapsed = false }
+        } label: {
+            HStack(spacing: 4) {
+                if tab.isSecure { Image(systemName: "lock.fill").font(.system(size: 9)) }
+                Text(tab.displayHost).font(.footnote.weight(.medium))
+            }
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 26)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(.bar)
+        .accessibilityLabel("Show toolbar, \(tab.displayHost)")
     }
 
     private var addressCapsule: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 0) {
             if !addressFocused { pageMenu }
             ZStack {
                 TextField("", text: $addressText)
@@ -105,7 +131,7 @@ struct BrowserScreen: View {
                     .onSubmit { go(addressText) }
                     .foregroundColor(addressFocused ? .primary : .clear)
                     .tint(addressFocused ? .accentColor : .clear)
-                    .padding(.leading, addressFocused ? 10 : 0)
+                    .padding(.leading, addressFocused ? 12 : 0)
                 if !addressFocused { addressLabel.allowsHitTesting(false) }
             }
             if addressFocused {
@@ -116,20 +142,24 @@ struct BrowserScreen: View {
                     .padding(.trailing, 10)
                     .accessibilityLabel("Clear")
                 }
-            } else if !tab.showsStartPage {
-                Button { tab.isLoading ? tab.webView.stopLoading() : tab.reload() } label: {
-                    Image(systemName: tab.isLoading ? "xmark" : "arrow.clockwise")
-                        .font(.system(size: 15, weight: .medium))
-                        .frame(width: 40, height: 44)
-                }
-                .tint(.primary)
-                .accessibilityLabel(tab.isLoading ? "Stop" : "Reload")
             } else {
-                Color.clear.frame(width: 40, height: 44)
+                InstrumentIndicator { showInstruments = true }
+                if tab.showsStartPage {
+                    Color.clear.frame(width: 40, height: 44)
+                } else {
+                    Button { tab.isLoading ? tab.stop() : tab.reload() } label: {
+                        Image(systemName: tab.isLoading ? "xmark" : "arrow.clockwise")
+                            .font(.system(size: 15, weight: .medium))
+                            .frame(width: 40, height: 44)
+                    }
+                    .tint(.primary)
+                    .accessibilityLabel(tab.isLoading ? "Stop" : "Reload")
+                }
             }
         }
-        .frame(height: 44)
-        .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .frame(height: 46)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .shadow(color: .black.opacity(0.13), radius: 5, y: 1.5)
         .overlay(alignment: .bottom) {
             if tab.isLoading && !addressFocused {
                 GeometryReader { proxy in
@@ -137,9 +167,15 @@ struct BrowserScreen: View {
                         .frame(width: max(8, proxy.size.width * tab.progress), height: 2.5)
                 }
                 .frame(height: 2.5)
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 10)
             }
         }
+        .simultaneousGesture(DragGesture(minimumDistance: 30).onEnded { drag in
+            // Like Safari: swipe across the address bar to move between tabs.
+            let distance = drag.translation.width
+            guard !addressFocused, abs(distance) > 70, abs(distance) > abs(drag.translation.height) * 2 else { return }
+            browser.selectAdjacentTab(distance < 0 ? 1 : -1)
+        })
     }
 
     private var addressLabel: some View {
@@ -164,29 +200,45 @@ struct BrowserScreen: View {
 
     private var pageMenu: some View {
         Menu {
+            Section {
+                Button { showInstruments = true } label: { Label("Instruments", systemImage: "pianokeys") }
+                Button { tab.loadTestKeyboard() } label: { Label("Test Keyboard", systemImage: "music.note") }
+            }
             if let url = tab.displayURL, !tab.isTestKeyboard {
-                ShareLink(item: url) { Label("Share…", systemImage: "square.and.arrow.up") }
-                Button { browser.toggleBookmark(title: tab.title, url: url) } label: {
-                    browser.bookmark(for: url) == nil
-                        ? Label("Add Bookmark", systemImage: "bookmark")
-                        : Label("Remove Bookmark", systemImage: "bookmark.slash")
+                Section {
+                    Button { browser.toggleBookmark(title: tab.title, url: url) } label: {
+                        browser.bookmark(for: url) == nil
+                            ? Label("Add Bookmark", systemImage: "bookmark")
+                            : Label("Remove Bookmark", systemImage: "bookmark.slash")
+                    }
+                    Button { tab.findOnPage() } label: { Label("Find on Page", systemImage: "doc.text.magnifyingglass") }
+                    Button { tab.toggleDesktopSite() } label: {
+                        tab.desktopSite
+                            ? Label("Request Mobile Website", systemImage: "iphone")
+                            : Label("Request Desktop Website", systemImage: "desktopcomputer")
+                    }
+                    if trackers.isEnabled, let host = url.host {
+                        Button {
+                            trackers.toggleExempt(host)
+                            tab.reload()
+                        } label: {
+                            trackers.isExempt(host)
+                                ? Label("Turn On Tracker Blocking Here", systemImage: "shield.lefthalf.filled")
+                                : Label("Turn Off Tracker Blocking Here", systemImage: "shield.slash")
+                        }
+                    }
+                    Button { browser.setHome(url) } label: { Label("Set as Home Page", systemImage: "house") }
                 }
-                Button { tab.findOnPage() } label: { Label("Find on Page", systemImage: "doc.text.magnifyingglass") }
-                Button { tab.toggleDesktopSite() } label: {
-                    tab.desktopSite
-                        ? Label("Request Mobile Website", systemImage: "iphone")
-                        : Label("Request Desktop Website", systemImage: "desktopcomputer")
+            }
+            Section {
+                Button { fullScreen = true } label: {
+                    Label("Hide Toolbar", systemImage: "arrow.up.left.and.arrow.down.right")
                 }
-                Button { browser.setHome(url) } label: { Label("Set as Home Page", systemImage: "house") }
+                Button { showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
             }
-            Button { fullScreen = true } label: {
-                Label("Full Screen", systemImage: "arrow.up.left.and.arrow.down.right")
-            }
-            Button { tab.loadTestKeyboard() } label: { Label("Test Keyboard", systemImage: "pianokeys") }
-            Button { showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
         } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 16, weight: .medium))
+            Image(systemName: "textformat.size")
+                .font(.system(size: 15, weight: .medium))
                 .frame(width: 40, height: 44)
                 .contentShape(Rectangle())
         }
@@ -197,25 +249,19 @@ struct BrowserScreen: View {
     private var toolbar: some View {
         HStack {
             Button { tab.webView.goBack() } label: { Image(systemName: "chevron.backward") }
-                .disabled(!tab.canGoBack)
+                .disabled(tab.showsStartPage || !tab.canGoBack)
                 .accessibilityLabel("Back")
             Spacer()
             Button { tab.webView.goForward() } label: { Image(systemName: "chevron.forward") }
-                .disabled(!tab.canGoForward)
+                .disabled(tab.showsStartPage || !tab.canGoForward)
                 .accessibilityLabel("Forward")
             Spacer()
-            Button { showInstruments = true } label: {
-                Image(systemName: "pianokeys")
-                    .overlay(alignment: .topTrailing) {
-                        if !midi.inputs.isEmpty {
-                            Circle()
-                                .fill(activityLit ? Color.green : Color.accentColor)
-                                .frame(width: 8, height: 8)
-                                .offset(x: 6, y: -4)
-                        }
-                    }
+            if let url = tab.displayURL, !tab.isTestKeyboard {
+                ShareLink(item: url) { Image(systemName: "square.and.arrow.up") }
+                    .accessibilityLabel("Share")
+            } else {
+                Image(systemName: "square.and.arrow.up").foregroundStyle(.tertiary)
             }
-            .accessibilityLabel("Instruments, \(midi.inputs.count) connected")
             Spacer()
             Button { showLibrary = true } label: { Image(systemName: "book") }
                 .accessibilityLabel("Bookmarks and History")
@@ -232,7 +278,7 @@ struct BrowserScreen: View {
                 .accessibilityLabel("Tabs, \(browser.tabs.count) open")
         }
         .font(.system(size: 21))
-        .padding(.horizontal, 26)
+        .padding(.horizontal, 28)
         .frame(height: 46)
     }
 
@@ -242,6 +288,7 @@ struct BrowserScreen: View {
         let matches = browser.suggestions(for: addressText)
         return ZStack(alignment: .bottom) {
             Color.black.opacity(0.25)
+                .ignoresSafeArea(edges: .top)
                 .onTapGesture { addressFocused = false }
             if !matches.isEmpty {
                 VStack(spacing: 0) {
@@ -296,7 +343,31 @@ struct BrowserScreen: View {
         }
         .padding(10)
         .opacity(0.7)
-        .accessibilityLabel("Exit Full Screen")
+        .accessibilityLabel("Show Toolbar")
+    }
+}
+
+/// Piano icon in the address bar while an instrument is connected; flashes green as notes arrive.
+/// Kept as its own view so incoming notes redraw only this icon.
+private struct InstrumentIndicator: View {
+    let action: () -> Void
+    @EnvironmentObject private var midi: MIDIManager
+    @State private var lit = false
+
+    var body: some View {
+        if !midi.inputs.isEmpty {
+            Button(action: action) {
+                Image(systemName: "pianokeys")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(lit ? Color.green : Color.accentColor)
+                    .frame(width: 30, height: 44)
+            }
+            .onReceive(midi.activity) { _ in
+                lit = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { lit = false }
+            }
+            .accessibilityLabel("Instruments, \(midi.inputs.count) connected")
+        }
     }
 }
 

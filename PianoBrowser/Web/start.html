@@ -73,8 +73,8 @@
     <h2>Connecting</h2>
     <ol>
       <li><b>USB:</b> plug the instrument in with a USB-C cable or a Lightning “Camera Adapter”. It appears above by itself.</li>
-      <li><b>Bluetooth:</b> tap the piano button in the toolbar, then “Bluetooth MIDI”.</li>
-      <li>On your piano app, tap ••• in the address bar → “Set as Home Page” to open it in every new tab.</li>
+      <li><b>Bluetooth:</b> open the address bar menu → “Instruments”, then “Bluetooth MIDI”.</li>
+      <li>On your piano app, open the address bar menu → “Set as Home Page” to open it in every new tab.</li>
     </ol>
   </section>
 </main>
@@ -215,7 +215,7 @@
     if (!ul.children.length) {
       var li = document.createElement('li');
       li.className = 'empty';
-      li.textContent = 'No instrument connected yet. Plug one in, or pair over Bluetooth from the piano button.';
+      li.textContent = 'No instrument connected yet. Plug one in, or pair over Bluetooth from Instruments in the address bar menu.';
       ul.appendChild(li);
     }
     midi.inputs.forEach(function (p) { p.onmidimessage = onMessage; });

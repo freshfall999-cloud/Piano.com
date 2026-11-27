@@ -57,7 +57,10 @@ final class Browser: NSObject, ObservableObject {
     @Published private(set) var homeURL = UserDefaults.standard.string(forKey: "homeURL") ?? ""
     @Published private(set) var lastDownload: URL?
     @Published var filterEnabled = UserDefaults.standard.object(forKey: "filterEnabled") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(filterEnabled, forKey: "filterEnabled") }
+        didSet {
+            UserDefaults.standard.set(filterEnabled, forKey: "filterEnabled")
+            if filterEnabled { filter.prewarm() }
+        }
     }
     @Published var searchEngine = SearchEngine(rawValue: UserDefaults.standard.string(forKey: "searchEngine") ?? "") ?? .duckDuckGo {
         didSet { UserDefaults.standard.set(searchEngine.rawValue, forKey: "searchEngine") }
@@ -65,6 +68,9 @@ final class Browser: NSObject, ObservableObject {
 
     let midi: MIDIManager
     let filter = SiteFilter()
+    private(set) lazy var trackers = TrackerBlocker(controller: userContentController)
+    /// Websites that turned out not to offer https, so they aren't upgraded again.
+    var httpOnlyHosts = Set<String>()
     private let userContentController = WKUserContentController()
     private var privateStore: WKWebsiteDataStore?
     private var allowedOrigins = Set(UserDefaults.standard.stringArray(forKey: "midiAllowedOrigins") ?? [])
@@ -72,6 +78,13 @@ final class Browser: NSObject, ObservableObject {
     init(midi: MIDIManager) {
         self.midi = midi
         super.init()
+        _ = trackers
+
+        // Tells websites not to sell or share this visitor's data (Global Privacy Control).
+        userContentController.addUserScript(WKUserScript(
+            source: "try{Object.defineProperty(Navigator.prototype,'globalPrivacyControl',{value:true,configurable:true})}catch(e){}",
+            injectionTime: .atDocumentStart, forMainFrameOnly: false))
+        if filterEnabled { filter.prewarm() }
 
         if let url = Bundle.main.url(forResource: "WebMIDIPolyfill", withExtension: "js"),
            let source = try? String(contentsOf: url, encoding: .utf8) {
@@ -80,8 +93,8 @@ final class Browser: NSObject, ObservableObject {
         }
         userContentController.addScriptMessageHandler(self, contentWorld: .page, name: Browser.handlerName)
 
-        bookmarks = Browser.load([Bookmark].self, key: "bookmarks") ?? []
-        history = Browser.load([HistoryEntry].self, key: "history") ?? []
+        bookmarks = Storage.load([Bookmark].self, key: "bookmarks") ?? []
+        history = Storage.load([HistoryEntry].self, key: "history") ?? []
 
         midi.onMessage = { [weak self] id, bytes in
             guard let tab = self?.selectedTab, tab.isListeningForMIDI else { return }
@@ -100,7 +113,10 @@ final class Browser: NSObject, ObservableObject {
         restoreTabs()
         #if DEBUG
         if let test = UserDefaults.standard.string(forKey: "uiTestURL"), let url = url(fromInput: test) {
-            newTab(url: url)
+            let tab = newTab(url: url)
+            if let script = UserDefaults.standard.string(forKey: "uiTestJS") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 7) { tab.webView.evaluateJavaScript(script, completionHandler: nil) }
+            }
         }
         #endif
     }
@@ -118,6 +134,7 @@ final class Browser: NSObject, ObservableObject {
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.applicationNameForUserAgent = "Version/18.0 Mobile/15E148 Safari/604.1"
         configuration.preferences.isFraudulentWebsiteWarningEnabled = true
+        configuration.upgradeKnownHostsToHTTPS = true
         if isPrivate {
             if privateStore == nil { privateStore = .nonPersistent() }
             configuration.websiteDataStore = privateStore ?? .nonPersistent()
@@ -153,9 +170,15 @@ final class Browser: NSObject, ObservableObject {
         saveTabs()
     }
 
+    /// Moves to the tab before (-1) or after (+1) the current one.
+    func selectAdjacentTab(_ step: Int) {
+        guard let index = tabs.firstIndex(where: { $0.id == selectedTabID }), tabs.indices.contains(index + step) else { return }
+        select(tabs[index + step])
+    }
+
     func close(_ tab: Tab) {
         guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
-        tab.webView.stopLoading()
+        tab.stop()
         tabs.remove(at: index)
         if !tabs.contains(where: \.isPrivate) { privateStore = nil }
         if tabs.isEmpty {
@@ -169,7 +192,7 @@ final class Browser: NSObject, ObservableObject {
     }
 
     func closeAllTabs() {
-        tabs.forEach { $0.webView.stopLoading() }
+        tabs.forEach { $0.stop() }
         tabs.removeAll()
         privateStore = nil
         newTab()
@@ -188,13 +211,13 @@ final class Browser: NSObject, ObservableObject {
             guard let url = tab.displayURL, !url.isFileURL else { return nil }
             return SavedTab(url: url.absoluteString, title: tab.title)
         }
-        Browser.save(saved, key: "tabs")
+        Storage.save(saved, key: "tabs")
         let selected = normal.filter { $0.displayURL?.isFileURL == false }.firstIndex { $0.id == selectedTabID }
         UserDefaults.standard.set(selected ?? -1, forKey: "selectedTab")
     }
 
     private func restoreTabs() {
-        let saved = Browser.load([SavedTab].self, key: "tabs") ?? []
+        let saved = Storage.load([SavedTab].self, key: "tabs") ?? []
         for item in saved {
             guard let url = URL(string: item.url) else { continue }
             tabs.append(Tab(browser: self, configuration: makeConfiguration(isPrivate: false), isPrivate: false,
@@ -255,12 +278,12 @@ final class Browser: NSObject, ObservableObject {
         } else {
             bookmarks.append(Bookmark(title: title.isEmpty ? (url.host ?? url.absoluteString) : title, url: url.absoluteString))
         }
-        Browser.save(bookmarks, key: "bookmarks")
+        Storage.save(bookmarks, key: "bookmarks")
     }
 
     func removeBookmarks(at offsets: IndexSet) {
         bookmarks.remove(atOffsets: offsets)
-        Browser.save(bookmarks, key: "bookmarks")
+        Storage.save(bookmarks, key: "bookmarks")
     }
 
     func recordVisit(title: String, url: URL) {
@@ -268,17 +291,17 @@ final class Browser: NSObject, ObservableObject {
         if history.first?.url == address { history.removeFirst() }
         history.insert(HistoryEntry(title: title.isEmpty ? (url.host ?? address) : title, url: address, date: Date()), at: 0)
         if history.count > 500 { history.removeLast(history.count - 500) }
-        Browser.save(history, key: "history")
+        Storage.save(history, key: "history")
     }
 
     func removeHistory(_ entry: HistoryEntry) {
         history.removeAll { $0.id == entry.id }
-        Browser.save(history, key: "history")
+        Storage.save(history, key: "history")
     }
 
     func clearHistoryAndData() {
         history.removeAll()
-        Browser.save(history, key: "history")
+        Storage.save(history, key: "history")
         WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
                                                 modifiedSince: .distantPast) {}
     }
@@ -333,24 +356,13 @@ final class Browser: NSObject, ObservableObject {
         })
         Presenter.present(alert) { completion(false) }
     }
-
-    // MARK: Storage
-
-    private static func load<T: Decodable>(_ type: T.Type, key: String) -> T? {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
-        return try? JSONDecoder().decode(type, from: data)
-    }
-
-    private static func save<T: Encodable>(_ value: T, key: String) {
-        if let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: key) }
-    }
 }
 
 extension Browser: WKScriptMessageHandlerWithReply {
     func userContentController(_ userContentController: WKUserContentController,
                                didReceive message: WKScriptMessage,
                                replyHandler: @escaping (Any?, String?) -> Void) {
-        guard let tab = tabs.first(where: { $0.webView === message.webView }),
+        guard let tab = tabs.first(where: { $0.isWebViewLoaded && $0.webView === message.webView }),
               let body = message.body as? [String: Any], let type = body["type"] as? String else {
             return replyHandler(nil, "Bad message")
         }

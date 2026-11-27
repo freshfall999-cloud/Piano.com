@@ -7,6 +7,18 @@ struct StartPageView: View {
     @EnvironmentObject private var browser: Browser
     @EnvironmentObject private var midi: MIDIManager
 
+    var body: some View {
+        StartPageContent(tab: tab, trackers: browser.trackers, openInstruments: openInstruments)
+    }
+}
+
+private struct StartPageContent: View {
+    @ObservedObject var tab: Tab
+    @ObservedObject var trackers: TrackerBlocker
+    let openInstruments: () -> Void
+    @EnvironmentObject private var browser: Browser
+    @EnvironmentObject private var midi: MIDIManager
+
     private let columns = [GridItem(.adaptive(minimum: 74), spacing: 14, alignment: .top)]
 
     var body: some View {
@@ -46,11 +58,27 @@ struct StartPageView: View {
                     }
                 }
                 if browser.bookmarks.isEmpty {
-                    Text("Websites you bookmark from the ••• menu appear here.")
+                    Text("Websites you bookmark from the address bar menu appear here.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
 
+                Text("Privacy Report").font(.title3.bold())
+                HStack(spacing: 12) {
+                    Image(systemName: trackers.isEnabled ? "shield.lefthalf.filled" : "shield.slash")
+                        .font(.title2)
+                        .foregroundStyle(trackers.isEnabled ? Color.accentColor : Color.secondary)
+                    Text(trackers.isEnabled
+                         ? "Piano Browser stops \(trackers.ruleCount.formatted()) known trackers and ad servers from following you across websites."
+                         : "Tracker blocking is turned off in Settings.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(14)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                Text("Instruments").font(.title3.bold())
                 Button(action: openInstruments) {
                     HStack(spacing: 12) {
                         Image(systemName: "pianokeys").font(.title3).foregroundStyle(.tint)
@@ -72,7 +100,8 @@ struct StartPageView: View {
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 28)
+            .padding(.top, 28)
+            .padding(.bottom, 130)
             .frame(maxWidth: 640)
             .frame(maxWidth: .infinity)
         }

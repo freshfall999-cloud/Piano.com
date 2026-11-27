@@ -13,11 +13,18 @@ final class SiteFilter {
     }
 
     private var cache: [String: (blocked: Bool, checked: Date)] = [:]
+    private var inFlight: [String: Task<Bool, Never>] = [:]
     private let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 4
         return URLSession(configuration: configuration)
     }()
+
+    /// Opens the connection to the filter ahead of the first page load.
+    @MainActor
+    func prewarm() {
+        Task { _ = await isBlocked(host: "example.com") }
+    }
 
     /// True if the filter lists this host. If the filter can't be reached the site is allowed.
     @MainActor
@@ -25,19 +32,29 @@ final class SiteFilter {
         let host = rawHost.lowercased()
         if SiteFilter.isLocal(host) { return false }
         if let hit = cache[host], Date().timeIntervalSince(hit.checked) < 3600 { return hit.blocked }
+        if let running = inFlight[host] { return await running.value }
 
+        let session = self.session
+        let task = Task<Bool, Never> { @MainActor [weak self] in
+            let blocked = await SiteFilter.lookUp(host, session: session)
+            if let blocked { self?.cache[host] = (blocked, Date()) }
+            self?.inFlight[host] = nil
+            return blocked ?? false
+        }
+        inFlight[host] = task
+        return await task.value
+    }
+
+    private static func lookUp(_ host: String, session: URLSession) async -> Bool? {
         var components = URLComponents(string: "https://family.cloudflare-dns.com/dns-query")
         components?.queryItems = [URLQueryItem(name: "name", value: host), URLQueryItem(name: "type", value: "A")]
-        guard let url = components?.url else { return false }
+        guard let url = components?.url else { return nil }
         var request = URLRequest(url: url)
         request.setValue("application/dns-json", forHTTPHeaderField: "accept")
-
         guard let (data, _) = try? await session.data(for: request),
-              let reply = try? JSONDecoder().decode(Reply.self, from: data) else { return false }
+              let reply = try? JSONDecoder().decode(Reply.self, from: data) else { return nil }
         // The filter answers 0.0.0.0 for anything it blocks.
-        let blocked = reply.Answer?.contains { $0.type == 1 && $0.data == "0.0.0.0" } ?? false
-        cache[host] = (blocked, Date())
-        return blocked
+        return reply.Answer?.contains { $0.type == 1 && $0.data == "0.0.0.0" } ?? false
     }
 
     /// Devices on the local network are never looked up.
@@ -69,6 +86,30 @@ final class SiteFilter {
         items.removeAll { $0.name == name }
         items.append(URLQueryItem(name: name, value: value))
         components.queryItems = items
+        return components.url
+    }
+
+    private static let trackingParameters: Set<String> = [
+        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id",
+        "fbclid", "gclid", "gclsrc", "dclid", "gbraid", "wbraid", "msclkid", "twclid", "ttclid", "yclid",
+        "igshid", "mc_eid", "mc_cid", "_hsenc", "_hsmi", "mkt_tok", "vero_id", "oly_enc_id", "oly_anon_id", "s_cid"
+    ]
+
+    /// The same link without the click-tracking tags that ad networks append, or nil if it has none.
+    static func withoutTrackingParameters(_ url: URL) -> URL? {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let items = components.percentEncodedQueryItems else { return nil }
+        let kept = items.filter { !trackingParameters.contains($0.name.lowercased()) }
+        guard kept.count != items.count else { return nil }
+        components.percentEncodedQueryItems = kept.isEmpty ? nil : kept
+        return components.url
+    }
+
+    /// The https version of a plain-http address on the default port, or nil if it doesn't apply.
+    static func httpsVersion(of url: URL) -> URL? {
+        guard url.scheme?.lowercased() == "http", url.port == nil, let host = url.host, !isLocal(host.lowercased()),
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        components.scheme = "https"
         return components.url
     }
 }

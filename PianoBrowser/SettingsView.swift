@@ -2,6 +2,15 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var browser: Browser
+
+    var body: some View {
+        SettingsForm(trackers: browser.trackers)
+    }
+}
+
+private struct SettingsForm: View {
+    @ObservedObject var trackers: TrackerBlocker
+    @EnvironmentObject private var browser: Browser
     @Environment(\.dismiss) private var dismiss
     @State private var confirmClear = false
 
@@ -14,6 +23,14 @@ struct SettingsView: View {
                     Text("Protection")
                 } footer: {
                     Text("Blocks websites known for malware, phishing or adult content, and turns on safe search in Google, Bing, DuckDuckGo and Yahoo. To check a website, its name (not the page or what you do there) is sent to Cloudflare’s family filter. Fraudulent-website warnings are always on.")
+                }
+
+                Section {
+                    Toggle("Block Trackers and Ads", isOn: $trackers.isEnabled)
+                } header: {
+                    Text("Privacy")
+                } footer: {
+                    Text("Stops \(trackers.ruleCount.formatted()) known tracker and ad servers from loading, removes click-tracking tags from links, and asks websites not to sell or share your data. Connections are switched to encrypted HTTPS whenever a website offers it, cross-site cookies are blocked, and your history and bookmarks are stored encrypted on this device. Websites can still see your IP address; iCloud Private Relay or a VPN hides that.")
                 }
 
                 Section("Search") {
@@ -33,7 +50,7 @@ struct SettingsView: View {
                 } header: {
                     Text("New Tabs")
                 } footer: {
-                    Text("To open your piano app in every new tab, visit it and choose Set as Home Page from the ••• menu.")
+                    Text("To open your piano app in every new tab, visit it and choose Set as Home Page from the address bar menu.")
                 }
 
                 Section {

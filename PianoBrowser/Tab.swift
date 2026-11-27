@@ -6,7 +6,9 @@ import WebKit
 final class Tab: NSObject, ObservableObject, Identifiable {
     let id = UUID()
     let isPrivate: Bool
-    let webView: WKWebView
+    /// Created the first time it's needed, so restored tabs cost nothing until opened.
+    private(set) lazy var webView: WKWebView = makeWebView()
+    private(set) var isWebViewLoaded = false
 
     @Published private(set) var url: URL?
     @Published private(set) var title = ""
@@ -19,9 +21,15 @@ final class Tab: NSObject, ObservableObject, Identifiable {
     @Published private(set) var desktopSite = false
     /// Set while a "blocked" or "can't open" page stands in for this address.
     @Published private(set) var internalPageFor: URL?
+    /// True after scrolling down: the bottom bar shrinks to a strip, as in Safari.
+    @Published var barCollapsed = false
 
     private weak var browser: Browser?
+    private let configuration: WKWebViewConfiguration
     private var pendingURL: URL?
+    private var httpsUpgrade: (host: String, original: URL)?
+    private var scrollAnchor: CGFloat = 0
+    private var barChanged = Date.distantPast
     private var downloadDestination: URL?
     private var midiMainFrame = false
     private var midiSubframes: [WKFrameInfo] = []
@@ -35,8 +43,13 @@ final class Tab: NSObject, ObservableObject, Identifiable {
         self.url = restoredURL
         self.title = restoredTitle
         self.showsStartPage = showsStartPage && restoredURL == nil
-        webView = WKWebView(frame: .zero, configuration: configuration)
+        self.configuration = configuration
         super.init()
+    }
+
+    private func makeWebView() -> WKWebView {
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        isWebViewLoaded = true
 
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -52,14 +65,42 @@ final class Tab: NSObject, ObservableObject, Identifiable {
         webView.publisher(for: \.canGoForward).receive(on: DispatchQueue.main).assign(to: &$canGoForward)
         webView.publisher(for: \.isLoading).receive(on: DispatchQueue.main).assign(to: &$isLoading)
         webView.publisher(for: \.estimatedProgress).receive(on: DispatchQueue.main).assign(to: &$progress)
-        webView.publisher(for: \.title).receive(on: DispatchQueue.main).sink { [weak self] title in
+        webView.publisher(for: \.title).dropFirst().receive(on: DispatchQueue.main).sink { [weak self] title in
             guard let self, self.pendingURL == nil else { return }
             self.title = title ?? ""
         }.store(in: &cancellables)
-        webView.publisher(for: \.url).receive(on: DispatchQueue.main).sink { [weak self] url in
+        webView.publisher(for: \.url).dropFirst().receive(on: DispatchQueue.main).sink { [weak self] url in
             guard let self, self.pendingURL == nil else { return }
             self.url = url
         }.store(in: &cancellables)
+        webView.scrollView.publisher(for: \.contentOffset).sink { [weak self] offset in
+            self?.scrolled(to: offset.y, in: webView.scrollView)
+        }.store(in: &cancellables)
+        return webView
+    }
+
+    /// Collapses the bottom bar after scrolling down a little and brings it back on the way up.
+    private func scrolled(to y: CGFloat, in scrollView: UIScrollView) {
+        guard scrollView.isTracking || scrollView.isDecelerating,
+              Date().timeIntervalSince(barChanged) > 0.35 else {
+            scrollAnchor = y
+            return
+        }
+        var collapse = barCollapsed
+        if y <= 0 {
+            collapse = false
+        } else if !barCollapsed {
+            scrollAnchor = min(scrollAnchor, y)
+            if y > scrollAnchor + 50, scrollView.contentSize.height > scrollView.bounds.height * 1.5 { collapse = true }
+        } else {
+            scrollAnchor = max(scrollAnchor, y)
+            if y < scrollAnchor - 90 { collapse = false }
+        }
+        if collapse != barCollapsed {
+            barChanged = Date()
+            scrollAnchor = y
+            withAnimation(.easeInOut(duration: 0.2)) { barCollapsed = collapse }
+        }
     }
 
     // MARK: What the address bar shows
@@ -107,6 +148,10 @@ final class Tab: NSObject, ObservableObject, Identifiable {
     /// Loads a restored tab the first time it is shown.
     func activate() {
         if let url = pendingURL { load(url) }
+    }
+
+    func stop() {
+        if isWebViewLoaded { webView.stopLoading() }
     }
 
     func reload() {
@@ -190,14 +235,16 @@ extension Tab: WKNavigationDelegate {
         if navigationAction.shouldPerformDownload {
             return decisionHandler(.download, preferences)
         }
-        guard scheme == "http" || scheme == "https", let browser, browser.filterEnabled, let host = url.host else {
+        guard scheme == "http" || scheme == "https", let browser, let host = url.host else {
             return decisionHandler(.allow, preferences)
         }
-        if isMainFrame, navigationAction.request.httpMethod ?? "GET" == "GET", let safe = SiteFilter.safeSearchURL(for: url) {
+        if isMainFrame, navigationAction.request.httpMethod ?? "GET" == "GET",
+           navigationAction.navigationType != .backForward, let better = improved(url) {
             decisionHandler(.cancel, preferences)
-            webView.load(URLRequest(url: safe))
+            webView.load(URLRequest(url: better))
             return
         }
+        guard browser.filterEnabled else { return decisionHandler(.allow, preferences) }
         Task { @MainActor in
             if await browser.filter.isBlocked(host: host) {
                 decisionHandler(.cancel, preferences)
@@ -209,6 +256,25 @@ extension Tab: WKNavigationDelegate {
                 decisionHandler(.allow, preferences)
             }
         }
+    }
+
+    /// A safer or more private address for the same page: https instead of http,
+    /// click-tracking tags removed, safe search on. Nil when the address is already fine.
+    private func improved(_ original: URL) -> URL? {
+        guard let browser else { return nil }
+        var url = original
+        if let host = url.host?.lowercased(), url.scheme?.lowercased() == "http" {
+            if httpsUpgrade?.host == host {
+                // The https version sent us straight back to http: this site doesn't do https.
+                browser.httpOnlyHosts.insert(host)
+            } else if !browser.httpOnlyHosts.contains(host), let secure = SiteFilter.httpsVersion(of: url) {
+                httpsUpgrade = (host, url)
+                url = secure
+            }
+        }
+        if browser.trackers.isEnabled, let clean = SiteFilter.withoutTrackingParameters(url) { url = clean }
+        if browser.filterEnabled, let safe = SiteFilter.safeSearchURL(for: url) { url = safe }
+        return url == original ? nil : url
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
@@ -231,6 +297,8 @@ extension Tab: WKNavigationDelegate {
         // A new page has to ask for MIDI again before it receives anything.
         midiMainFrame = false
         midiSubframes.removeAll()
+        httpsUpgrade = nil
+        if barCollapsed { barCollapsed = false }
         if webView.url?.scheme != "about" { internalPageFor = nil }
     }
 
@@ -246,6 +314,13 @@ extension Tab: WKNavigationDelegate {
         // Cancelled loads and "frame load interrupted" (downloads, blocked pages) need no error page.
         if nsError.code == NSURLErrorCancelled || (nsError.domain == "WebKitErrorDomain" && nsError.code == 102) { return }
         guard let failed = (nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL) ?? webView.url ?? url else { return }
+        if let upgrade = httpsUpgrade, failed.host?.lowercased() == upgrade.host, nsError.code != NSURLErrorNotConnectedToInternet {
+            // No working https here: fall back to the plain address (shown as Not Secure).
+            httpsUpgrade = nil
+            browser?.httpOnlyHosts.insert(upgrade.host)
+            webView.load(URLRequest(url: upgrade.original))
+            return
+        }
         showInternalPage(for: failed, title: "Can’t Open Page", symbol: "🧭", heading: "Can’t open this page",
                          detail: nsError.localizedDescription)
     }
