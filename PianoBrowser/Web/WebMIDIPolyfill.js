@@ -1,5 +1,5 @@
 // Web MIDI API for WKWebView. Injected at document start into every frame.
-// Native side: BrowserModel.swift (message handler "pianoMIDI") + MIDIManager.swift (CoreMIDI).
+// Native side: Browser.swift and Tab.swift (message handler "pianoMIDI") + MIDIManager.swift (CoreMIDI).
 (function () {
   'use strict';
 

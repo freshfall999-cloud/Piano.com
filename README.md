@@ -1,17 +1,36 @@
 # Piano Browser
 
-A web browser for iPhone and iPad that gives web pages the **Web MIDI API**, which
-Safari and every other iOS browser lack. Plug in a digital piano, keyboard, drum pad
-or any other MIDI instrument and web apps that call `navigator.requestMIDIAccess()`
-just work.
+A web browser for iPhone and iPad that looks and works like Safari, and gives web
+pages the **Web MIDI API**, which Safari and every other iOS browser lack. Plug in a
+digital piano, keyboard, drum pad or any other MIDI instrument and web apps that call
+`navigator.requestMIDIAccess()` just work.
+
+**Browser**
+
+- Tabs with a tab grid, private tabs, and tabs restored on the next launch.
+- Address bar at the bottom that searches or opens addresses, with suggestions from bookmarks and history.
+- Start page with favorites, bookmarks, history, share, find on page, desktop-site mode, downloads (saved to Files), full screen.
+- Links that open new windows, sign-in prompts, pull to refresh and swipe back/forward all behave as in Safari.
+
+**Protection** (Settings → Block Unsafe and Adult Websites, on by default)
+
+- Every website is checked against [Cloudflare for Families](https://developers.cloudflare.com/1.1.1.1/setup/#1111-for-families)
+  before it opens; sites listed for malware, phishing or adult content get a "blocked" page instead.
+  Only the website's name is sent for the check.
+- Safe search is forced on in Google, Bing, DuckDuckGo and Yahoo.
+- WebKit's fraudulent-website warning is always on.
+- Limits: the check is per website, so an allowed site can still show images hosted elsewhere, and
+  sites with mixed content (social networks, video sites) are not filtered page by page. If the
+  filter can't be reached, pages load unchecked. The switch is not passcode-protected.
+
+**Instruments**
 
 - **USB** instruments (USB-C cable, or Apple's Lightning to USB Camera Adapter) appear automatically.
 - **Bluetooth MIDI** instruments are paired from the piano button in the toolbar.
 - MIDI **in and out**: pages receive what you play and can send notes back to the instrument.
 - Each website has to ask permission once before it can use your instruments.
 - Sound keeps playing with the silent switch on, and the screen stays awake.
-- Built-in test keyboard and MIDI monitor (⋯ → Test Keyboard) to check a connection.
-- Full-screen mode, bookmarks, and a home page you can set to your piano app.
+- Built-in test keyboard and MIDI monitor to check a connection.
 
 ## Install on your iPhone
 
@@ -31,7 +50,7 @@ developer account removes that limit.
 
 Type your app's address in the address bar. Local dev servers work too
 (`192.168.1.20:3000`, `my-mac.local:5173` — plain `http` is allowed).
-Then ⋯ → **Set as Home Page** so it opens straight into your app.
+Then ••• in the address bar → **Set as Home Page** so every new tab opens your app.
 
 Your page needs nothing special: standard Web MIDI code works unchanged.
 
@@ -47,10 +66,12 @@ midi.inputs.forEach(input => {
 | File | Role |
 | --- | --- |
 | `PianoBrowser/Web/WebMIDIPolyfill.js` | Injected into every page; implements `requestMIDIAccess`, `MIDIAccess`, `MIDIInput`, `MIDIOutput` and their events |
-| `PianoBrowser/BrowserModel.swift` | Owns the `WKWebView`; passes messages between pages and CoreMIDI; per-site permission |
+| `PianoBrowser/Browser.swift` | Tabs, bookmarks, history, settings; passes MIDI messages between pages and CoreMIDI; per-site MIDI permission |
+| `PianoBrowser/Tab.swift` | One tab's `WKWebView`: navigation, filtering, downloads, dialogs |
+| `PianoBrowser/SiteFilter.swift` | Website check against the family DNS filter, safe-search rewriting |
 | `PianoBrowser/MIDIManager.swift` | CoreMIDI: listens to every source, sends to destinations, tracks hot-plugging |
-| `PianoBrowser/ContentView.swift`, `InstrumentsView.swift` | Browser UI and the instruments sheet |
-| `PianoBrowser/Web/start.html` | Start page with test keyboard and MIDI monitor |
+| `PianoBrowser/*View.swift` | The interface: browser window, start page, tab grid, bookmarks/history, settings, instruments |
+| `PianoBrowser/Web/start.html` | Test keyboard and MIDI monitor |
 
 `node tests/polyfill.test.js` runs the polyfill and start page in Chromium against a
 fake native bridge (needs the `playwright` npm package).

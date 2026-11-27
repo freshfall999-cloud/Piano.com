@@ -235,6 +235,7 @@ extension Tab: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        browser?.saveTabs()
         guard !isPrivate, internalPageFor == nil, let url = webView.url,
               url.scheme == "http" || url.scheme == "https" else { return }
         browser?.recordVisit(title: webView.title ?? "", url: url)

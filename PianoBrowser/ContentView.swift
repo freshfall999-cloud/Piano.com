@@ -152,7 +152,7 @@ struct BrowserScreen: View {
                     Image(systemName: "hand.raised.fill").font(.caption)
                 } else if tab.isSecure {
                     Image(systemName: "lock.fill").font(.caption2)
-                } else if tab.displayURL?.scheme == "http" {
+                } else if tab.internalPageFor == nil, tab.displayURL?.scheme == "http" {
                     Text("Not Secure —")
                 }
                 Text(tab.displayHost).foregroundStyle(.primary)

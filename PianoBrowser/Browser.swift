@@ -150,6 +150,7 @@ final class Browser: NSObject, ObservableObject {
         selectedTab.takeSnapshot()
         selectedTabID = tab.id
         tab.activate()
+        saveTabs()
     }
 
     func close(_ tab: Tab) {
@@ -164,6 +165,7 @@ final class Browser: NSObject, ObservableObject {
             selectedTabID = next.id
             next.activate()
         }
+        saveTabs()
     }
 
     func closeAllTabs() {
@@ -171,6 +173,7 @@ final class Browser: NSObject, ObservableObject {
         tabs.removeAll()
         privateStore = nil
         newTab()
+        saveTabs()
     }
 
     private struct SavedTab: Codable {

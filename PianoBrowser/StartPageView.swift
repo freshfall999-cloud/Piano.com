@@ -32,15 +32,17 @@ struct StartPageView: View {
                                 .font(.system(size: 26))
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .background(Color.accentColor)
+                                .background(Color(red: 0.76, green: 0.25, blue: 0.05))
                         }
                     }
+                    .buttonStyle(.plain)
                     ForEach(browser.bookmarks) { bookmark in
                         Button {
                             if let url = URL(string: bookmark.url) { tab.load(url) }
                         } label: {
                             FavoriteTile(title: bookmark.title) { SiteIcon(address: bookmark.url, title: bookmark.title) }
                         }
+                        .buttonStyle(.plain)
                     }
                 }
                 if browser.bookmarks.isEmpty {
@@ -58,6 +60,7 @@ struct StartPageView: View {
                                 .foregroundStyle(.primary)
                             Text(midi.inputs.isEmpty ? "Plug in with USB or pair over Bluetooth" : "Ready for web apps that use MIDI")
                                 .font(.footnote)
+                                .multilineTextAlignment(.leading)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
@@ -66,6 +69,7 @@ struct StartPageView: View {
                     .padding(14)
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 28)
